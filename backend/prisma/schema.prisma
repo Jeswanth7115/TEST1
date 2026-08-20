@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------
+// User & Org Normalization: Standard normalized RBAC model. 
+// Join table (OrganizationUser) allows users to belong to multiple orgs.
+// ---------------------------------------------------------
+
+model User {
+  id           String             @id @default(uuid())
+  email        String             @unique
+  passwordHash String
+  name         String?
+  role         String             // e.g., "SUPER_ADMIN", "USER"
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  orgs         OrganizationUser[]
+}
+
+model Organization {
+  id        String             @id @default(uuid())
+  name      String
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  users     OrganizationUser[]
+  projects  Project[]
+}
+
+model OrganizationUser {
+  id        String       @id @default(uuid())
+  userId    String
+  orgId     String
+  role      String       // e.g., "OWNER", "MEMBER"
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+}
+
+// ---------------------------------------------------------
+// Project & Queue: Hierarchical grouping.
+// Project belongs to Org (Cascade). Queue belongs to Project (Cascade).
+// ---------------------------------------------------------
+
+model Project {
+  id        String       @id @default(uuid())
+  orgId     String
+  name      String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  queues    Queue[]
+}
+
+model Queue {
+  id                   String       @id @default(uuid())
+  projectId            String
+  name                 String
+  priority             Int          @default(0)
+  concurrencyLimit     Int          @default(10)
+  isPaused             Boolean      @default(false)
+  defaultRetryPolicyId String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  retryPolicy RetryPolicy? @relation(fields: [defaultRetryPolicyId], references: [id], onDelete: SetNull)
+  jobs        Job[]
+}
+
+// ---------------------------------------------------------
+// RetryPolicy: Reusable config. 
+// Isolated in its own table to avoid repeating retry logic on every job (Normalization).
+// ---------------------------------------------------------
+
+model RetryPolicy {
+  id          String   @id @default(uuid())
+  strategy    String   // "FIXED", "LINEAR", "EXPONENTIAL"
+  baseDelayMs Int
+  maxRetries  Int
+  maxDelayMs  Int?
+  
+  queues      Queue[]
+  jobs        Job[]
+}
+
+// ---------------------------------------------------------
+// Job: The core entity. 
+// Denormalization trade-off: payload is JSON instead of relational tables to allow arbitrary job data without schema changes.
+// Cascade reasoning: If a Queue is deleted, we Restrict deletion if Jobs exist to prevent silent loss of historical job data.
+// ---------------------------------------------------------
+
+model Job {
+  id             String    @id @default(uuid())
+  queueId        String
+  type           String
+  payload        String    // JSON string stored as text (SQLite limitation, usually Json type in PG)
+  status         String    // "QUEUED", "SCHEDULED", "CLAIMED", "RUNNING", "COMPLETED", "FAILED", "DEAD_LETTER"
+  priority       Int       @default(0)
+  runAt          DateTime?
+  cronExpression String?
+  batchId        String?
+  retryPolicyId  String?
+  attemptCount   Int       @default(0)
+  maxAttempts    Int       @default(3)
+  idempotencyKey String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  queue           Queue             @relation(fields: [queueId], references: [id], onDelete: Restrict)
+  retryPolicy     RetryPolicy?      @relation(fields: [retryPolicyId], references: [id], onDelete: SetNull)
+  executions      JobExecution[]
+  logs            JobLog[]
+  scheduledJobs   ScheduledJob[]
+  deadLetter      DeadLetterEntry?
+
+  // Indexes for high-performance polling and filtering
+  @@index([status, queueId, runAt])
+  @@index([queueId, priority])
+}
+
+// ---------------------------------------------------------
+// JobExecution & Worker: Tracks distributed workers processing jobs.
+// Worker deletion restricts if executions exist, to retain audit trails of which worker executed what.
+// ---------------------------------------------------------
+
+model Worker {
+  id         String            @id @default(uuid())
+  hostname   String
+  status     String            // "ACTIVE", "IDLE", "SHUTTING_DOWN", "DEAD"
+  lastSeenAt DateTime
+  startedAt  DateTime          @default(now())
+  
+  executions JobExecution[]
+  heartbeats WorkerHeartbeat[]
+}
+
+model JobExecution {
+  id         String    @id @default(uuid())
+  jobId      String
+  workerId   String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  status     String    // "RUNNING", "COMPLETED", "FAILED"
+  error      String?
+  durationMs Int?
+
+  job    Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  worker Worker   @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  logs   JobLog[]
+}
+
+model WorkerHeartbeat {
+  id             String   @id @default(uuid())
+  workerId       String
+  timestamp      DateTime @default(now())
+  activeJobCount Int
+
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, timestamp])
+}
+
+// ---------------------------------------------------------
+// JobLog: Ephemeral/Audit logs. 
+// Normalized into a separate table to keep the main Job table lightweight during reads.
+// ---------------------------------------------------------
+
+model JobLog {
+  id          String   @id @default(uuid())
+  jobId       String
+  executionId String?
+  level       String   // "INFO", "WARN", "ERROR"
+  message     String
+  timestamp   DateTime @default(now())
+
+  job       Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  execution JobExecution? @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+// ---------------------------------------------------------
+// ScheduledJob: Handles recurring triggers.
+// Separated from Job to allow one cron schedule to spawn many individual one-off Jobs.
+// ---------------------------------------------------------
+
+model ScheduledJob {
+  id             String   @id @default(uuid())
+  jobId          String
+  cronExpression String
+  nextRunAt      DateTime
+  isActive       Boolean  @default(true)
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------
+// DeadLetterEntry: Failed jobs that exhausted retries.
+// 1:1 relation with Job.
+// ---------------------------------------------------------
+
+model DeadLetterEntry {
+  id              String   @id @default(uuid())
+  jobId           String   @unique
+  reason          String
+  failedAt        DateTime @default(now())
+  originalPayload String
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
