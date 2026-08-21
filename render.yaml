@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: job-scheduler-backend
+    env: node
+    region: singapore
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate && npx prisma db push
+    startCommand: npm run dev
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: JWT_SECRET
+        value: super-secret-jwt-token-key-change-in-production

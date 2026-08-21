@@ -1,0 +1,2 @@
+# Node.js project requirements / notes
+# Primary dependencies are managed via backend/package.json and frontend/package.json
