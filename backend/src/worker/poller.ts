@@ -32,10 +32,26 @@ export interface ClaimedJob {
   retryPolicyId: string | null;
   cronExpression: string | null;
   batchId: string | null;
+  demoMode: boolean;
 }
 
 export async function pollAndClaim(workerId: string): Promise<ClaimedJob[]> {
   const allClaimed: ClaimedJob[] = [];
+
+  const worker = await prisma.worker.findUnique({ where: { id: workerId }, select: { status: true } });
+  if (!worker || worker.status !== 'ACTIVE') {
+    console.warn(`[POLL] Worker ${workerId} is no longer active; skipping claims.`);
+    return allClaimed;
+  }
+
+  // Each process claims only its available capacity. This prevents the first
+  // polling node from taking an entire queue and lets live nodes share work.
+  const workerCapacity = Math.max(1, Number(process.env.WORKER_CONCURRENCY || 1));
+  const activeForWorker = await prisma.jobExecution.count({
+    where: { workerId, status: 'RUNNING' }
+  });
+  let remainingCapacity = Math.max(0, workerCapacity - activeForWorker);
+  if (remainingCapacity === 0) return allClaimed;
 
   const queues = await prisma.queue.findMany({ where: { isPaused: false } });
 
@@ -45,10 +61,22 @@ export async function pollAndClaim(workerId: string): Promise<ClaimedJob[]> {
         where: { queueId: queue.id, status: { in: ['CLAIMED', 'RUNNING'] } }
       });
 
-      const availableSlots = Math.min(queue.concurrencyLimit - runningCount, 3);
+      const availableSlots = Math.min(queue.concurrencyLimit - runningCount, remainingCapacity);
       if (availableSlots <= 0) continue;
 
       const claimed = await prisma.$transaction(async (tx) => {
+        // Delayed and one-time scheduled jobs become claimable when due.
+        // Recurring templates keep cronExpression set and are advanced by scheduler.ts.
+        await tx.job.updateMany({
+          where: {
+            queueId: queue.id,
+            status: 'SCHEDULED',
+            cronExpression: null,
+            runAt: { lte: new Date() }
+          },
+          data: { status: 'QUEUED' }
+        });
+
         const eligible = await tx.job.findMany({
           where: {
             queueId: queue.id,
@@ -65,7 +93,7 @@ export async function pollAndClaim(workerId: string): Promise<ClaimedJob[]> {
 
         await tx.job.updateMany({
           where: { id: { in: ids }, status: 'QUEUED' },
-          data: { status: 'CLAIMED' },
+          data: { status: 'CLAIMED', claimedByWorkerId: workerId, claimedAt: new Date() },
         });
 
         return eligible;
@@ -82,7 +110,10 @@ export async function pollAndClaim(workerId: string): Promise<ClaimedJob[]> {
         retryPolicyId: j.retryPolicyId,
         cronExpression: j.cronExpression,
         batchId: j.batchId,
+        demoMode: j.demoMode,
       })));
+      remainingCapacity -= claimed.length;
+      if (remainingCapacity === 0) break;
 
     } catch (err) {
       console.error(`[POLL] Error polling queue ${queue.id}:`, (err as Error).message);

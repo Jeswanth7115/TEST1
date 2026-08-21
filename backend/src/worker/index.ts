@@ -1,3 +1,4 @@
+import 'dotenv/config';
 /**
  * Worker Process — Main Entry Point
  * 
@@ -23,6 +24,13 @@ import { startScheduler, stopScheduler } from './scheduler';
 let workerId: string;
 let isShuttingDown = false;
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+let pendingShutdownSignal: string | null = null;
+const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 500);
+const DEMO_STAGE_DELAY_MS = 5000;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // Track in-flight jobs for graceful shutdown
 const inFlightJobs = new Set<Promise<void>>();
@@ -36,7 +44,7 @@ function getActiveJobCount(): number {
 }
 
 /**
- * Main polling cycle. Called every 2 seconds.
+ * Main polling cycle. Called at the configured polling interval.
  * 
  * IMPORTANT (SQLite): Jobs are processed sequentially, not concurrently.
  * SQLite only supports a single writer at a time. If we fire many concurrent
@@ -51,18 +59,17 @@ async function pollCycle(): Promise<void> {
   try {
     const claimed = await pollAndClaim(workerId);
 
-    for (const job of claimed) {
-      // We removed 'if (isShuttingDown) break;' because if we break here, 
-      // the jobs we just atomically claimed are left stuck in CLAIMED status forever.
-      // Since the batch is small (max 3), we just let them finish executing.
-
-      // Sequential execution for SQLite compatibility.
-      // Track as in-flight for graceful shutdown awareness.
+    const jobPromises = claimed.map(async (job) => {
+      if (job.demoMode) await wait(DEMO_STAGE_DELAY_MS);
       const jobPromise = runJob(job, workerId);
       inFlightJobs.add(jobPromise);
-      await jobPromise;
-      inFlightJobs.delete(jobPromise);
-    }
+      try {
+        await jobPromise;
+      } finally {
+        inFlightJobs.delete(jobPromise);
+      }
+    });
+    await Promise.all(jobPromises);
 
     if (claimed.length > 0) {
       console.log(`[WORKER] Processed ${claimed.length} job(s).`);
@@ -161,16 +168,17 @@ async function main(): Promise<void> {
   // Start recurring job scheduler (every 10s)
   startScheduler();
 
-  // Start polling loop (every 2s)
-  pollInterval = setInterval(pollCycle, 2000);
-  // Also run immediately
-  pollCycle();
-  console.log('[WORKER] Polling started (2s interval)');
+  // Start polling loop.
+  pollInterval = setInterval(pollCycle, POLL_INTERVAL_MS);
+  // Complete the first poll before processing a signal received during startup.
+  await pollCycle();
+  console.log(`[WORKER] Polling started (${POLL_INTERVAL_MS}ms interval)`);
   console.log('[WORKER] Ready to process jobs!\n');
 
-  // Register shutdown handlers
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+  if (pendingShutdownSignal) {
+    await gracefulShutdown(pendingShutdownSignal);
+    return;
+  }
 
   // Cross-platform shutdown: closing the worker's stdin pipe from the parent
   // process triggers graceful shutdown. This is more reliable than SIGINT on
@@ -178,6 +186,18 @@ async function main(): Promise<void> {
   process.stdin.resume();
   process.stdin.on('close', () => gracefulShutdown('STDIN_CLOSE'));
 }
+
+function requestShutdown(signal: string): void {
+  if (!workerId) {
+    pendingShutdownSignal = signal;
+    return;
+  }
+  void gracefulShutdown(signal);
+}
+
+// Install handlers before async startup so termination cannot bypass graceful shutdown.
+process.on('SIGTERM', () => requestShutdown('SIGTERM'));
+process.on('SIGINT', () => requestShutdown('SIGINT'));
 
 main().catch((err) => {
   console.error('[WORKER] Fatal startup error:', err);

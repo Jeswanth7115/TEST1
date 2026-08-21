@@ -6,6 +6,7 @@ import { validateBody } from '../middleware/validate';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { catchAsync } from '../utils/catchAsync';
 import { getPaginationParams } from '../utils/pagination';
+import { requireAdmin } from '../middleware/admin';
 
 const router = Router();
 router.use(authenticate);
@@ -57,35 +58,42 @@ const payloadSchema = z.any().refine((val) => {
 const immediateSchema = z.object({
   type: z.string().min(1),
   payload: payloadSchema,
-  mode: z.literal('immediate')
+  mode: z.literal('immediate'),
+  demoMode: z.boolean().optional().default(false)
 });
 
 const delayedSchema = z.object({
   type: z.string().min(1),
   payload: payloadSchema,
   mode: z.literal('delayed'),
-  delayMs: z.number().int().min(1).max(86400000 * 30) // max 30 days
+  delayMs: z.number().int().min(1).max(86400000 * 30), // max 30 days
+  demoMode: z.boolean().optional().default(false)
 });
 
 const scheduledSchema = z.object({
   type: z.string().min(1),
   payload: payloadSchema,
   mode: z.literal('scheduled'),
-  runAt: z.string().datetime()
+  runAt: z.string().datetime(),
+  demoMode: z.boolean().optional().default(false)
 });
 
 const recurringSchema = z.object({
   type: z.string().min(1),
   payload: payloadSchema,
   mode: z.literal('recurring'),
-  cronExpression: z.string().min(1, 'cronExpression must not be empty').refine(isValidCron, { message: 'Invalid cron expression or interval too short (minimum 1 minute)' })
+  cronExpression: z.string().min(1, 'cronExpression must not be empty').refine(isValidCron, { message: 'Invalid cron expression or interval too short (minimum 1 minute)' }),
+  timezone: z.string().min(1).optional().default('UTC'),
+  demoMode: z.boolean().optional().default(false)
 });
 
 const batchSchema = z.object({
   type: z.string().min(1),
   mode: z.literal('batch'),
   jobs: z.array(z.object({
-    payload: payloadSchema
+    type: z.string().min(1).optional(),
+    payload: payloadSchema,
+    demoMode: z.boolean().optional().default(false)
   })).min(1).max(1000)
 });
 
@@ -132,6 +140,7 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
           payload: payloadStr(body.payload),
           status: 'QUEUED',
           runAt: new Date(),
+          demoMode: body.demoMode,
           idempotencyKey
         }
       });
@@ -147,6 +156,7 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
           payload: payloadStr(body.payload),
           status: 'SCHEDULED',
           runAt,
+          demoMode: body.demoMode,
           idempotencyKey
         }
       });
@@ -165,6 +175,7 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
           payload: payloadStr(body.payload),
           status: 'SCHEDULED',
           runAt,
+          demoMode: body.demoMode,
           idempotencyKey
         }
       });
@@ -172,7 +183,7 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
     }
 
     case 'recurring': {
-      const cron = CronExpressionParser.parse(body.cronExpression);
+      const cron = CronExpressionParser.parse(body.cronExpression, { tz: body.timezone });
       const nextRunAt = cron.next().toDate();
 
       const result = await prisma.$transaction(async (tx) => {
@@ -184,6 +195,7 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
             status: 'SCHEDULED',
             cronExpression: body.cronExpression,
             runAt: nextRunAt,
+            demoMode: body.demoMode,
             idempotencyKey
           }
         });
@@ -191,6 +203,7 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
           data: {
             jobId: job.id,
             cronExpression: body.cronExpression,
+            timezone: body.timezone,
             nextRunAt
           }
         });
@@ -203,14 +216,15 @@ router.post('/queues/:queueId/jobs', validateBody(createJobSchema), catchAsync(a
     case 'batch': {
       const batchId = crypto.randomUUID();
       const jobs = await prisma.$transaction(
-        body.jobs.map((j: { payload: any }) =>
+        body.jobs.map((j: { type?: string; payload: any; demoMode?: boolean }) =>
           prisma.job.create({
             data: {
               queueId,
-              type: body.type,
+              type: j.type || body.type,
               payload: payloadStr(j.payload),
               status: 'QUEUED',
               batchId,
+              demoMode: j.demoMode ?? false,
               runAt: new Date()
             }
           })
@@ -252,7 +266,14 @@ router.get('/queues/:queueId/jobs', catchAsync(async (req: AuthRequest, res: Res
       where,
       skip,
       take,
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      include: {
+        executions: {
+          orderBy: { startedAt: 'desc' },
+          take: 1,
+          include: { worker: { select: { id: true, hostname: true, status: true } } }
+        }
+      }
     }),
     prisma.job.count({ where })
   ]);
@@ -325,6 +346,31 @@ router.post('/jobs/:id/retry', catchAsync(async (req: AuthRequest, res: Response
   });
 
   res.json(updated);
+}));
+
+router.post('/jobs/:id/ticket', validateBody(z.object({ reason: z.string().min(5).max(1000) })), catchAsync(async (req: AuthRequest, res: Response) => {
+  const jobId = req.params.id as string;
+  const { exists, allowed } = await checkJobAccess(req.user!.userId, jobId);
+  if (!exists) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job not found', details: null } }); return; }
+  if (!allowed) { res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You do not have access to this job', details: null } }); return; }
+  const ticket = await prisma.adminTicket.create({ data: { jobId, createdById: req.user!.userId, reason: req.body.reason } });
+  res.status(201).json(ticket);
+}));
+
+router.get('/admin/tickets', requireAdmin, catchAsync(async (req: AuthRequest, res: Response) => {
+  const tickets = await prisma.adminTicket.findMany({ where: { status: 'OPEN' }, include: { job: true, createdBy: { select: { name: true, email: true } } }, orderBy: { createdAt: 'desc' } });
+  res.json({ data: tickets });
+}));
+
+router.delete('/admin/jobs/:id', requireAdmin, catchAsync(async (req: AuthRequest, res: Response) => {
+  const jobId = req.params.id as string;
+  const job = await prisma.job.findUnique({ where: { id: jobId } });
+  if (!job) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job not found', details: null } }); return; }
+  await prisma.$transaction([
+    prisma.adminTicket.updateMany({ where: { jobId: job.id, status: 'OPEN' }, data: { status: 'RESOLVED' } }),
+    prisma.job.delete({ where: { id: job.id } })
+  ]);
+  res.status(204).send();
 }));
 
 // ── DELETE /api/jobs/:id ─────────────────────────────────────

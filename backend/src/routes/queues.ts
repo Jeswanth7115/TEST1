@@ -27,7 +27,11 @@ const createQueueSchema = z.object({
   name: z.string().min(1).max(255),
   priority: z.number().int().min(0).default(0),
   concurrencyLimit: z.number().int().min(1).default(10),
-  retryPolicy: retryPolicySchema
+  retryPolicy: retryPolicySchema.default({
+    strategy: 'FIXED',
+    baseDelayMs: 1000,
+    maxRetries: 3
+  })
 });
 
 const updateQueueSchema = z.object({
@@ -289,7 +293,24 @@ router.delete('/queues/:id', catchAsync(async (req: AuthRequest, res: Response) 
   }
 
   await prisma.$transaction(async (tx) => {
+    // Delete all non-active jobs (COMPLETED, FAILED, DEAD_LETTER) associated with this queue
+    const queueJobs = await tx.job.findMany({
+      where: { queueId: id },
+      select: { id: true }
+    });
+
+    if (queueJobs.length > 0) {
+      const jobIds = queueJobs.map(j => j.id);
+      await tx.jobExecution.deleteMany({ where: { jobId: { in: jobIds } } });
+      await tx.jobLog.deleteMany({ where: { jobId: { in: jobIds } } });
+      await tx.scheduledJob.deleteMany({ where: { jobId: { in: jobIds } } });
+      await tx.deadLetterEntry.deleteMany({ where: { jobId: { in: jobIds } } });
+      await tx.adminTicket.deleteMany({ where: { jobId: { in: jobIds } } });
+      await tx.job.deleteMany({ where: { queueId: id } });
+    }
+
     await tx.queue.delete({ where: { id } });
+
     if (queue.defaultRetryPolicyId) {
       await tx.retryPolicy.delete({ where: { id: queue.defaultRetryPolicyId } });
     }

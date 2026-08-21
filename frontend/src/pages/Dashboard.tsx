@@ -1,14 +1,28 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { orgService, projectService, queueService } from '../api/services';
-import { Folder, Database, Plus, Trash2 } from 'lucide-react';
+import { Folder, Database, Plus, Trash2, RefreshCw, Activity, PauseCircle } from 'lucide-react';
+
+interface Project {
+  id: string;
+  name: string;
+}
+
+interface Queue {
+  id: string;
+  name: string;
+  priority: number;
+  concurrencyLimit: number;
+  isPaused: boolean;
+}
 
 export default function Dashboard() {
-  const [orgs, setOrgs] = useState<any[]>([]);
-  const [projects, setProjects] = useState<any[]>([]);
+  const [orgs, setOrgs] = useState<{ id: string }[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [queues, setQueues] = useState<any[]>([]);
+  const [queues, setQueues] = useState<Queue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   // Modal states
@@ -38,16 +52,22 @@ export default function Dashboard() {
           setQueues([]);
         }
       }
-    } catch (err) {
-      console.error("Failed to load dashboard data", err);
+    } catch (err: any) {
+      setErrorMsg(err.response?.data?.error?.message || 'Unable to load workspace data. Try again.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadData(selectedProjectId);
+  };
 
   const handleSelectProject = async (projId: string) => {
     setSelectedProjectId(projId);
@@ -111,25 +131,56 @@ export default function Dashboard() {
     return <div className="flex h-full items-center justify-center">Loading...</div>;
   }
 
+  const pausedQueues = queues.filter((queue) => queue.isPaused).length;
+
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold leading-7 text-slate-900 sm:truncate sm:text-3xl sm:tracking-tight">
-          Dashboard
-        </h2>
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-sm font-semibold text-sky-700">Workspace overview</p>
+          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Project operations</h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">Keep delivery moving with a clear view of projects, queue capacity, and paused workloads.</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          Refresh data
+        </button>
       </div>
 
       {errorMsg && (
-        <div className="rounded-md bg-red-50 p-4 text-sm text-red-700 flex justify-between items-center">
+        <div role="alert" className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <span>{errorMsg}</span>
-          <button onClick={() => setErrorMsg('')} className="font-bold">✕</button>
+          <button aria-label="Dismiss error" onClick={() => setErrorMsg('')} className="rounded-lg px-2 py-1 font-bold hover:bg-red-100">&times;</button>
         </div>
       )}
 
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Projects</span><Folder className="h-4 w-4 text-sky-700" /></div>
+          <p className="mt-4 text-3xl font-bold text-slate-950">{projects.length}</p>
+          <p className="mt-1 text-xs text-slate-500">Active workspaces</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Queues</span><Activity className="h-4 w-4 text-emerald-600" /></div>
+          <p className="mt-4 text-3xl font-bold text-slate-950">{queues.length}</p>
+          <p className="mt-1 text-xs text-slate-500">{queues.length - pausedQueues} ready to process</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Paused</span><PauseCircle className="h-4 w-4 text-amber-600" /></div>
+          <p className="mt-4 text-3xl font-bold text-slate-950">{pausedQueues}</p>
+          <p className="mt-1 text-xs text-slate-500">Queues needing attention</p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Projects Section */}
-        <div className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-900/5">
-          <div className="border-b border-slate-200 bg-slate-50 px-6 py-4 flex items-center justify-between">
+        <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-5">
             <h3 className="text-base font-semibold leading-6 text-slate-900 flex items-center">
               <Folder className="mr-2 h-5 w-5 text-slate-400" />
               Projects
@@ -171,8 +222,8 @@ export default function Dashboard() {
         </div>
 
         {/* Queues Section */}
-        <div className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-900/5">
-          <div className="border-b border-slate-200 bg-slate-50 px-6 py-4 flex items-center justify-between">
+        <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-5">
             <h3 className="text-base font-semibold leading-6 text-slate-900 flex items-center">
               <Database className="mr-2 h-5 w-5 text-slate-400" />
               Queues {selectedProjectId ? `(Selected Project)` : ''}

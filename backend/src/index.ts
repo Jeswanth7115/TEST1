@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth';
@@ -65,6 +66,10 @@ app.use((req, res) => {
 // Global Error Handler must be the last middleware
 app.use(errorHandler);
 
-app.listen(port, () => {
-  logger.info(`Server is running on port ${port}`);
-});
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(port, () => {
+    logger.info(`Server is running on port ${port}`);
+  });
+}
+
+export default app;

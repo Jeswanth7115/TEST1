@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5173",
+    "dev:admin": "vite --port 5174 --mode admin",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"

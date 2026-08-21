@@ -9,6 +9,10 @@ export const authService = {
     const response = await apiClient.post('/auth/signup', { email, password, name });
     return response.data;
   },
+  adminSignup: async (email: string, password: string, name: string, adminPasskey: string) => {
+    const response = await apiClient.post('/auth/admin/signup', { email, password, name, adminPasskey });
+    return response.data;
+  },
   getMe: async () => {
     const response = await apiClient.get('/auth/me');
     return response.data;
@@ -55,6 +59,10 @@ export const queueService = {
     const response = await apiClient.get(`/queues/${queueId}`);
     return response.data;
   },
+  update: async (queueId: string, data: { concurrencyLimit?: number; priority?: number }) => {
+    const response = await apiClient.patch(`/queues/${queueId}`, data);
+    return response.data;
+  },
   getMetrics: async (queueId: string) => {
     const response = await apiClient.get(`/queues/${queueId}/metrics`);
     return response.data;
@@ -74,6 +82,19 @@ export const queueService = {
 };
 
 export const jobService = {
+  create: async (queueId: string, data: {
+    type: string;
+    payload: unknown;
+    mode: 'immediate' | 'delayed' | 'scheduled' | 'batch';
+    delayMs?: number;
+    runAt?: string;
+    timezone?: string;
+    jobs?: { type?: string; payload: unknown }[];
+    demoMode?: boolean;
+  }) => {
+    const response = await apiClient.post(`/queues/${queueId}/jobs`, data);
+    return response.data;
+  },
   list: async (queueId: string, params?: { page?: number; limit?: number; status?: string; type?: string }) => {
     const response = await apiClient.get(`/queues/${queueId}/jobs`, { params });
     return response.data;
@@ -86,11 +107,30 @@ export const jobService = {
     const response = await apiClient.post(`/jobs/${jobId}/retry`);
     return response.data;
   }
+  ,createTicket: async (jobId: string, reason: string) => {
+    const response = await apiClient.post(`/jobs/${jobId}/ticket`, { reason });
+    return response.data;
+  },
+  adminTickets: async () => {
+    const response = await apiClient.get('/admin/tickets');
+    return response.data;
+  },
+  adminDelete: async (jobId: string) => {
+    await apiClient.delete(`/admin/jobs/${jobId}`);
+  }
 };
 
 export const workerService = {
   list: async () => {
     const response = await apiClient.get('/workers');
+    return response.data;
+  },
+  add: async (hostname: string) => {
+    const response = await apiClient.post('/workers/nodes', { hostname });
+    return response.data;
+  },
+  remove: async (workerId: string) => {
+    const response = await apiClient.delete(`/workers/${workerId}`);
     return response.data;
   }
 };

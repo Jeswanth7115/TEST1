@@ -41,7 +41,7 @@ These instructions will guide you through setting up the project from a clean cl
 
 ### 2. Running the Services
 
-The system requires **three** separate processes to be running simultaneously. Open three different terminal tabs:
+The system requires three processes to be running. Open three terminal tabs:
 
 **Terminal 1: Start the Backend API Server**
 ```bash
@@ -55,7 +55,7 @@ npm run dev
 cd backend
 npm run worker:start
 ```
-*(Polls the database and executes jobs)*
+*(Polls the database and executes jobs. Set `POLL_INTERVAL_MS` to tune polling latency.)*
 
 **Terminal 3: Start the Frontend Dashboard**
 ```bash
@@ -64,6 +64,17 @@ npm install
 npm run dev
 ```
 *(Runs on http://localhost:5173)*
+
+### Administrator portal
+
+Run the administrator UI separately so its login token cannot replace the user-dashboard token:
+
+```bash
+cd frontend
+npm run dev:admin
+```
+
+Open http://localhost:5174 for administrator login. Both portals use the API on port 3000, but browser storage is isolated by port. Start multiple worker processes with `npm run worker:start` to distribute queued work; each worker claims at most `WORKER_CONCURRENCY` jobs (default `1`).
 
 ### 3. Running Tests
 
@@ -74,3 +85,13 @@ cd backend
 npm test
 ```
 *(Tests run in a separate `test.db` to avoid mutating development data.)*
+
+### Administrator access
+
+After creating a user, promote it to an administrator from the backend directory:
+
+```bash
+npm run admin:promote -- user@example.com
+```
+
+Administrators can manage worker nodes and resolve open hanging-job tickets from the Workers view.

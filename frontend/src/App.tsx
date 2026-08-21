@@ -6,8 +6,10 @@ import Dashboard from './pages/Dashboard';
 import QueueDetail from './pages/QueueDetail';
 import JobExplorer from './pages/JobExplorer';
 import WorkerStatus from './pages/WorkerStatus';
+import Simulation from './pages/Simulation';
 
 function App() {
+  const isAdminPortal = import.meta.env.VITE_PORTAL === 'admin';
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
 
   const handleLoginSuccess = (newToken: string) => {
@@ -22,8 +24,9 @@ function App() {
         
         {/* Protected Routes */}
         <Route path="/" element={token ? <Layout /> : <Navigate to="/login" replace />}>
-          <Route index element={<Navigate to="/projects" replace />} />
+          <Route index element={<Navigate to={isAdminPortal ? '/workers' : '/projects'} replace />} />
           <Route path="projects" element={<Dashboard />} />
+          <Route path="simulation" element={<Simulation />} />
           <Route path="queues/:queueId" element={<QueueDetail />} />
           <Route path="queues/:queueId/jobs" element={<JobExplorer />} />
           <Route path="workers" element={<WorkerStatus />} />

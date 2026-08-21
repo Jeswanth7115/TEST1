@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "dev": "tsx src/index.ts",
-    "worker:start": "tsx src/worker/index.ts"
+    "worker:start": "tsx src/worker/index.ts",
+    "admin:promote": "tsx promote-admin.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +18,7 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "cron-parser": "^5.10.0",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "pino": "^10.3.1",

@@ -10,12 +10,15 @@ export default function QueueDetail() {
   const [queue, setQueue] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [concurrencyDraft, setConcurrencyDraft] = useState('');
+  const [savingConcurrency, setSavingConcurrency] = useState(false);
 
   const fetchQueueData = async () => {
     if (!queueId) return;
     try {
       const qData = await queueService.get(queueId);
       setQueue(qData);
+      setConcurrencyDraft(String(qData.concurrencyLimit));
       const mData = await queueService.getMetrics(queueId);
       setMetrics(mData);
     } catch (err) {
@@ -43,6 +46,14 @@ export default function QueueDetail() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const saveConcurrency = async () => {
+    const value = Number(concurrencyDraft);
+    if (!Number.isInteger(value) || value < 1 || value > 1000) return;
+    setSavingConcurrency(true);
+    try { await queueService.update(queue.id, { concurrencyLimit: value }); await fetchQueueData(); }
+    finally { setSavingConcurrency(false); }
   };
 
   if (loading && !queue) return <div className="p-8">Loading...</div>;
@@ -139,7 +150,7 @@ export default function QueueDetail() {
             <dl className="space-y-4">
               <div>
                 <dt className="text-sm font-medium text-slate-500">Concurrency Limit</dt>
-                <dd className="mt-1 text-sm text-slate-900">{queue.concurrencyLimit} concurrent jobs</dd>
+                <dd className="mt-2 flex items-center gap-2"><input aria-label="Concurrency limit" type="number" min="1" max="1000" value={concurrencyDraft} onChange={(event) => setConcurrencyDraft(event.target.value)} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-slate-900" /><button type="button" onClick={saveConcurrency} disabled={savingConcurrency} className="rounded-lg bg-sky-700 px-2.5 py-1.5 text-xs font-bold text-white disabled:opacity-50">{savingConcurrency ? 'Saving' : 'Apply'}</button></dd>
               </div>
               <div>
                 <dt className="text-sm font-medium text-slate-500">Priority</dt>

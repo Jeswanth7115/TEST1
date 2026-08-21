@@ -112,7 +112,9 @@ export async function reapStaleWorkers(): Promise<void> {
           data: { status: 'DEAD' }
         });
 
-        // Find active executions for this worker
+        // Close executions that were known to be running. A process can also
+        // die between claiming a job and creating its execution row, so jobs
+        // in CLAIMED state are recovered separately below.
         const activeExecutions = await tx.jobExecution.findMany({
           where: { workerId: worker.id, status: 'RUNNING' }
         });
@@ -127,13 +129,25 @@ export async function reapStaleWorkers(): Promise<void> {
             data: { status: 'FAILED', error: 'Worker died unexpectedly', finishedAt: new Date() }
           });
 
-          // Reset jobs to QUEUED so they can be re-claimed.
+          // Return jobs to the shared queue. Any active node can claim them on
+          // its next poll; no node-specific handoff is required.
           await tx.job.updateMany({
             where: { id: { in: jobIds } },
-            data: { status: 'QUEUED' }
+            data: { status: 'QUEUED', runAt: new Date(), attemptCount: { increment: 1 }, claimedByWorkerId: null, claimedAt: null }
           });
 
           console.warn(`[REAPER] Reclaimed ${jobIds.length} jobs from dead worker ${worker.id}.`);
+        }
+
+        const claimedJobs = await tx.job.findMany({
+          where: { status: 'CLAIMED', claimedByWorkerId: worker.id },
+          select: { id: true }
+        });
+        if (claimedJobs.length > 0) {
+          await tx.job.updateMany({
+            where: { id: { in: claimedJobs.map((job) => job.id) }, status: 'CLAIMED' },
+            data: { status: 'QUEUED', runAt: new Date(), attemptCount: { increment: 1 }, claimedByWorkerId: null, claimedAt: null }
+          });
         }
       });
     }

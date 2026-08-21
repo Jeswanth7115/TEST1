@@ -51,6 +51,10 @@ export function calculateRetryDelay(
   return delay;
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Run a single claimed job through the full lifecycle:
  * CLAIMED → RUNNING → COMPLETED | FAILED/RETRY | DEAD_LETTER
@@ -64,7 +68,7 @@ export async function runJob(job: ClaimedJob, workerId: string): Promise<void> {
     const execution = await prisma.$transaction(async (tx) => {
       await tx.job.update({
         where: { id: job.id },
-        data: { status: 'RUNNING' }
+        data: { status: 'RUNNING', claimedByWorkerId: null, claimedAt: null }
       });
       return tx.jobExecution.create({
         data: {
@@ -77,6 +81,8 @@ export async function runJob(job: ClaimedJob, workerId: string): Promise<void> {
 
     executionId = execution.id;
     await logJobEvent(job.id, 'INFO', `Job started by worker ${workerId}`, executionId);
+
+    if (job.demoMode) await wait(5000);
 
     // ─── STEP 2: Execute the pluggable handler with timeout ───
     const JOB_TIMEOUT_MS = process.env.JOB_TIMEOUT_MS ? parseInt(process.env.JOB_TIMEOUT_MS, 10) : 5 * 60 * 1000;
@@ -107,7 +113,7 @@ export async function runJob(job: ClaimedJob, workerId: string): Promise<void> {
       // ─── STEP 3a: SUCCESS → COMPLETED ───
       await prisma.$transaction(async (tx) => {
         const latestExec = await tx.jobExecution.findFirst({
-          where: { jobId: job.id },
+          where: { jobId: job.id, status: 'RUNNING' },
           orderBy: { startedAt: 'desc' }
         });
         if (latestExec?.id !== executionId) {
@@ -153,7 +159,7 @@ export async function runJob(job: ClaimedJob, workerId: string): Promise<void> {
 
       await prisma.$transaction(async (tx) => {
         const latestExec = await tx.jobExecution.findFirst({
-          where: { jobId: job.id },
+          where: { jobId: job.id, status: 'RUNNING' },
           orderBy: { startedAt: 'desc' }
         });
         if (latestExec?.id !== executionId) {
@@ -193,7 +199,7 @@ export async function runJob(job: ClaimedJob, workerId: string): Promise<void> {
           await tx.deadLetterEntry.create({
             data: {
               jobId: job.id,
-              reason: `Max attempts (${maxAttempts}) reached. Last error: ${result.error}`,
+              reason: result.error || 'Unknown error',
               originalPayload: job.payload
             }
           });
@@ -217,8 +223,8 @@ export async function runJob(job: ClaimedJob, workerId: string): Promise<void> {
     // Unexpected crash during execution — mark as failed
     console.error(`[EXECUTOR] Unexpected error for job ${job.id}:`, err);
     try {
-      await prisma.job.update({
-        where: { id: job.id },
+      await prisma.job.updateMany({
+        where: { id: job.id, status: { in: ['CLAIMED', 'RUNNING'] } },
         data: { status: 'FAILED', attemptCount: job.attemptCount + 1 }
       });
       if (executionId) {

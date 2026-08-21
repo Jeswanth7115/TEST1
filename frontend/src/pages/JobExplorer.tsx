@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { jobService } from '../api/services';
-import { RefreshCw, Filter, XCircle, AlertCircle, CheckCircle, Clock, Calendar } from 'lucide-react';
+import { RefreshCw, Filter, XCircle, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';

@@ -1,1 +1,84 @@
 @import "tailwindcss";
+
+:root {
+	font-family: "DM Sans", "Segoe UI", sans-serif;
+	color: #172033;
+	background: #f4f7fb;
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	min-width: 320px;
+	min-height: 100vh;
+	margin: 0;
+	background:
+		radial-gradient(circle at 12% 0%, rgba(41, 112, 193, 0.08), transparent 28rem),
+		#f4f7fb;
+}
+
+html.dark body {
+	color: #e5edf4;
+	background: #0d1822;
+}
+
+html.dark .app-header,
+html.dark .bg-white { background-color: #172735 !important; }
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/70,
+html.dark .bg-slate-50\/80 { background-color: #12212e !important; }
+html.dark .bg-sky-50\/60 { background-color: #102c40 !important; }
+html.dark .bg-indigo-50\/60 { background-color: #202343 !important; }
+html.dark .bg-emerald-50\/60 { background-color: #10352f !important; }
+html.dark .bg-rose-50\/60,
+html.dark .bg-red-50 { background-color: #3a2028 !important; }
+html.dark .text-slate-950,
+html.dark .text-slate-900,
+html.dark .text-slate-800 { color: #edf4f8 !important; }
+html.dark .text-slate-700,
+html.dark .text-slate-600,
+html.dark .text-slate-500 { color: #aebdca !important; }
+html.dark .border-slate-200,
+html.dark .border-slate-100,
+html.dark .border-white\/80 { border-color: #2b4356 !important; }
+html.dark input,
+html.dark select,
+html.dark textarea { color: #edf4f8; background-color: #122333; border-color: #385369; }
+html.dark input::placeholder,
+html.dark textarea::placeholder { color: #7890a1; }
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+}
+
+button,
+a {
+	-webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+	color: #ffffff;
+	background: #1f6f9f;
+}
+
+.app-shell {
+	min-height: 100vh;
+}
+
+.page-content {
+	width: min(100%, 1440px);
+	margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+	.page-content {
+		padding: 1.25rem;
+	}
+}

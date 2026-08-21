@@ -32,7 +32,7 @@ async function checkSchedules(): Promise<void> {
 
     for (const schedule of dueSchedules) {
       try {
-        const nextRunAt = computeNextRunAt(schedule.cronExpression);
+        const nextRunAt = computeNextRunAt(schedule.cronExpression, schedule.timezone);
 
         // Prevent overlapping runs: check if a job from this schedule is already active
         const activeInstance = await prisma.job.findFirst({
@@ -40,6 +40,7 @@ async function checkSchedules(): Promise<void> {
             queueId: schedule.job.queueId,
             type: schedule.job.type,
             cronExpression: schedule.cronExpression,
+            id: { not: schedule.job.id },
             status: { in: ['QUEUED', 'CLAIMED', 'RUNNING'] }
           }
         });
@@ -56,7 +57,8 @@ async function checkSchedules(): Promise<void> {
               priority: schedule.job.priority,
               runAt: new Date(),
               cronExpression: schedule.cronExpression,
-              retryPolicyId: schedule.job.retryPolicyId
+                retryPolicyId: schedule.job.retryPolicyId,
+                demoMode: schedule.job.demoMode
             }
           });
         } else {
@@ -70,7 +72,7 @@ async function checkSchedules(): Promise<void> {
           });
         });
 
-        console.log(`[SCHEDULER] Spawned job from schedule ${schedule.id}, next run: ${nextRunAt.toISOString()}`);
+        console.log(`[SCHEDULER] Processed schedule ${schedule.id}, next run: ${nextRunAt.toISOString()}`);
       } catch (err) {
         console.error(`[SCHEDULER] Error processing schedule ${schedule.id}:`, err);
       }
