@@ -2,6 +2,7 @@ import os
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 app = FastAPI(
     title="Job Scheduler Uvicorn Proxy",
@@ -62,5 +63,5 @@ async def proxy_all(request: Request, path: str):
             )
 
 if __name__ == "__main__":
-    import uvicorn
+    
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
